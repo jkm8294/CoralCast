@@ -1,0 +1,4 @@
+# Large raw datasets and downloads
+data_raw/
+*.nc
+*.nc4
