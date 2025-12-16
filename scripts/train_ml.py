@@ -317,6 +317,16 @@ def main():
     'band': band
   }
 
+  # Persist raw validation predictions for offline plotting (ROC/PR in reports/)
+  preds_dir = Path("tmp")
+  preds_dir.mkdir(exist_ok=True)
+  preds_path = preds_dir / f"{Path(args.out).stem}_preds.json"
+  preds_payload = {
+    "y_true": [int(v) for v in reef_metrics["ys_all"]],
+    "y_pred": [float(v) for v in reef_metrics["probs_all"]],
+  }
+  preds_path.write_text(json.dumps(preds_payload))
+
   Path(args.out).write_text(json.dumps(output, indent=2))
   print(
     f"Wrote {args.out} | reef_auc={reef_metrics['auc']:.3f} reef_aucpr={reef_metrics['aucpr']:.3f} "

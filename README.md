@@ -1,40 +1,80 @@
+# Coral Health & Hurricane Risk (Miami / Puerto Rico)
 
-  # Coral Health Index Web App
+This repo powers a web app and offline ML pipeline to:
+- Build regional hurricane-track datasets (Miami, Puerto Rico) from IBTrACS using coastline-aware buffers.
+- Enrich tracks with SST anomalies (OISST), climate indices (Niño 3.4, AMO), and basic atmos features.
+- Train per-region classifiers and export UI-ready insights (`public/ml_insights_*.json`).
+- Plot ROC/PR curves for reporting (no front-end required).
 
-  This is a code bundle for Coral Health Index Web App. The original project is available at https://www.figma.com/design/bkJ1CIRofiZ0H2InNnrT5P/Coral-Health-Index-Web-App.
+Mobile builds were removed; focus is the web app + ML artifacts.
 
-  ## Running the code
+## Project layout (key parts)
+- `src/` — React front-end (HurricanePredictor consumes `public/ml_insights_*.json`).
+- `scripts/` — Data prep, feature engineering, training, plotting.
+- `data_intermediate/` — Region track subsets and env-augmented CSVs (generated).
+- `data_ml/` — ML-ready feature tables (generated).
+- `public/ml_insights_*.json` — Model outputs consumed by the UI.
+- `reports/` — ROC/PR PNGs for reports (generated).
 
-Run `npm i` to install the dependencies.
+## Quickstart (front-end)
+```bash
+npm i
+npm run dev
+Click the local host link to see 
+```
 
-Run `npm run dev` to start the development server.
+## ML pipeline (per region)
+Assumes raw data (IBTrACS CSV, OISST, nino34.csv, amo.csv) already in `data_raw/`.
 
-### Live data & CORS
+1) Tracks → region subsets (uses GADM coastline buffers)
+```bash
+MPLCONFIGDIR=/tmp/mpl venv/bin/python scripts/prep_miami_hurricanes.py
+MPLCONFIGDIR=/tmp/mpl venv/bin/python scripts/prep_puerto_rico_hurricanes.py
+```
+2) Add env features (SST anomaly, nino34, amo, basic atmos)
+```bash
+PYTHONPATH=. MPLCONFIGDIR=/tmp/mpl venv/bin/python scripts/merge_env_data.py
+```
+3) Build ML features (recency stats, climate indices)
+```bash
+MPLCONFIGDIR=/tmp/mpl venv/bin/python scripts/build_ml_features.py --region miami
+MPLCONFIGDIR=/tmp/mpl venv/bin/python scripts/build_ml_features.py --region puerto_rico
+```
+4) Train + write insights (UI JSON + CV preds)
+```bash
+PYTHONPATH=. MPLCONFIGDIR=/tmp/mpl venv/bin/python scripts/train_ml.py \
+  --csv data_ml/miami_ml_features.csv \
+  --target impact_next30 \
+  --out public/ml_insights_miami.json \
+  --date-col date \
+  --splits 3
 
-NOAA/ERDDAP endpoints do not send permissive CORS headers, so the app routes every request through its own proxy:
+PYTHONPATH=. MPLCONFIGDIR=/tmp/mpl venv/bin/python scripts/train_ml.py \
+  --csv data_ml/puerto_rico_ml_features.csv \
+  --target impact_next30 \
+  --out public/ml_insights_puerto-rico.json \
+  --date-col date \
+  --splits 3
+```
+Each training run also writes `tmp/<out_stem>_preds.json` with CV predictions.
 
-- When you run `npm run dev` or `npm run preview`, the Vite server serves `/api/erddap`, which fetches ERDDAP data on the server and adds the appropriate `Access-Control-Allow-Origin` headers. No extra setup needed for local testing.
-- For production, deploy a tiny Node handler using `server/erddapProxy.ts` alongside your static assets (for example with Express, a serverless function, or any Node runtime). The front-end is already configured to call `/api/erddap?url=…`; just ensure that path is routed to the proxy handler.
+5) Plot ROC/PR for reports (from saved preds)
+```bash
+PYTHONPATH=. MPLCONFIGDIR=/tmp/mpl MPLBACKEND=Agg venv/bin/python scripts/plot_training.py \
+  --preds tmp/ml_insights_puerto-rico_preds.json \
+  --out-dir reports
+```
+Outputs: `reports/*_roc.png`, `reports/*_pr.png`.
 
-Security tip: the proxy only forwards to a short allowlist of ERDDAP domains. If you need additional sources, update `ALLOW_ORIGINS` in `server/erddapProxy.ts`.
+## Large data policy
+Raw datasets (IBTrACS CSVs, NetCDF, shapefiles) should live in `data_raw/` and be ignored from git. Add to `.gitignore`:
+```
+data_raw/
+*.nc
+*.nc4
+```
+Keep only small samples in the repo if needed; document download steps in scripts/README notes.
 
-## Mobile Builds with Capacitor
-
-1. Build the web bundle with `npm run build` (outputs to `dist/`).
-2. Install Capacitor tooling: `npm install @capacitor/core @capacitor/cli`.
-3. Initialize Capacitor shell: `npx cap init "Coral Health Index" com.yourorg.coralhealth --web-dir=dist`.
-4. Add native platforms:
-   - `npm install @capacitor/ios @capacitor/android`
-   - `npx cap add ios`
-   - `npx cap add android`
-5. Copy the production web assets into the native shells whenever you rebuild:
-   - `npm run build`
-   - `npx cap copy` (or `npx cap sync` after adding plugins)
-6. Open the projects in their respective IDEs:
-   - `npx cap open ios`
-   - `npx cap open android`
-7. Optional native plugins (example):
-   - `npm install @capacitor/geolocation @capacitor/filesystem`
-   - `npx cap sync`
-8. For full-screen maps on mobile, prefer dynamic viewport units (e.g., `height: 100dvh`) instead of `100vh` to avoid iOS Safari layout issues.
-  
+## Notes
+- If you need to refresh both regions, re-run steps 1–4; the UI will pick up new `public/ml_insights_*.json` after a hard refresh.
+- The decade bands in the UI are driven by the ML outputs; differentiation depends on the label sharpness and features (SST anomaly, ENSO/AMO, shear/humidity when available).
